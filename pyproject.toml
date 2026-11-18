@@ -1,0 +1,10 @@
+[project]
+name = "smart-wildcards"
+version = "0.1.0"
+description = "ComfyUI custom node providing a table-based UI for combining wildcard text files into a prompt."
+requires-python = ">=3.9"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
