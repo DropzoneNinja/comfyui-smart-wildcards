@@ -10,12 +10,14 @@ Milestones 1 and 2 are implemented at the repo root (not nested under a `smart_w
 - [x] Add `__init__.py` with `NODE_CLASS_MAPPINGS` / `NODE_DISPLAY_NAME_MAPPINGS` / `WEB_DIRECTORY` stub
 - [x] Register a minimal `SmartWildcards` node (category, `STRING` output named `prompt`, placeholder execute) — satisfies AC1
 - [x] Smoke-tested: package imports cleanly both as a ComfyUI-style package import (via `importlib.util.spec_from_file_location`, matching how ComfyUI's loader imports a custom-node directory) and as bare pytest modules — see `scanner.py`'s dual import fallback
-- [ ] **Not independently verifiable in this environment — no ComfyUI installation was found on this machine (checked `which comfyui`, filesystem search).** The following still need checking against a real, running ComfyUI instance before relying on them:
-  - Inspect the actual installed ComfyUI version and confirm `NODE_CLASS_MAPPINGS`/`WEB_DIRECTORY` conventions haven't changed
-  - Confirm `addDOMWidget` is available in the installed frontend (DESIGN.md §9); note fallback if not
-  - Confirm the `PromptServer.instance.routes` aiohttp registration pattern for the installed version (needed for Milestone 3)
-  - Confirm the Docker deployment's actual mount point for `/basedir/wildcards`
-  - Confirm the node loads with no errors and appears in a sensible node-menu category inside a running ComfyUI
+Verified 2026-11-19 against the local instance at `/Volumes/Data/ComfyUI/ComfyUI/ComfyUI` (ComfyUI v0.46.0, `comfyui-frontend-package` 1.59.6, Python 3.13.12, desktop/standalone build):
+
+- [x] Inspected the installed ComfyUI version and confirmed `NODE_CLASS_MAPPINGS` + `WEB_DIRECTORY` are still the conventions checked first by `load_custom_node` in `nodes.py` (a newer `comfy_entrypoint`/`ComfyExtension`/`io.Schema` API also exists and is now used by the shipped `example_node.py.example` template, but only as an `elif` fallback when `NODE_CLASS_MAPPINGS` is absent — our approach is correct and not legacy-only)
+- [x] Confirmed `addDOMWidget` exists in the bundled frontend JS (`comfyui_frontend_package`'s `core-*.js`/`app-*.js`) — no fallback needed for Milestone 4
+- [x] Confirmed the exact `PromptServer.instance.routes` aiohttp registration pattern from the shipped `custom_nodes/example_node.py.example` (`from server import PromptServer; @PromptServer.instance.routes.get(...)`) — matches DESIGN.md §8 as written
+- [x] Symlinked this repo into `custom_nodes/comfyui-smart-wildcards` and ran `python main.py --quick-test-for-ci --cpu` (full custom-node load path, no GPU/model init) — our module appears in the "Import times for custom nodes" log with no error and no `IMPORT FAILED` entry; process exits 0
+- [x] Started the real server (`python main.py --cpu --listen 127.0.0.1 --port 8198`) and queried `GET /object_info/SmartWildcards` directly — confirmed it's registered exactly as intended: `"display_name": "Smart Wildcards"`, `"category": "utils/wildcards"`, single `STRING` output named `"prompt"`. Server stopped afterward.
+- [ ] **Still open — out of scope for this local (non-Docker) instance:** confirming the actual Docker deployment's bind-mount path for `/basedir/wildcards`. Needs checking against the real Docker deployment when available.
 
 ## Milestone 2 — Backend discovery
 
