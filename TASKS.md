@@ -40,33 +40,43 @@ python3 -m venv .venv
 
 ## Milestone 3 — Backend API routes
 
-- [ ] `GET /smart_wildcards/files` (DESIGN.md §8, §2.1)
-- [ ] `GET /smart_wildcards/entries?file=<relpath>` (DESIGN.md §8, §2.2)
-- [ ] `POST /smart_wildcards/files` create (DESIGN.md §8)
-- [ ] `POST /smart_wildcards/refresh` — bypasses scan cache (DESIGN.md §4, §8)
-- [ ] Structured JSON error responses with correct HTTP status for every failure case in DESIGN.md §8's table
-- [ ] Integration tests covering each route's success and failure cases
+- [x] `GET /smart_wildcards/files` (DESIGN.md §8, §2.1) — [api_routes.py](api_routes.py)
+- [x] `GET /smart_wildcards/entries?file=<relpath>` (DESIGN.md §8, §2.2)
+- [x] `POST /smart_wildcards/files` create (DESIGN.md §8)
+- [x] `POST /smart_wildcards/refresh` — bypasses the in-memory tree cache and invalidates the entry-parse cache (DESIGN.md §4, §8)
+- [x] Structured JSON error responses with correct HTTP status for every failure case in DESIGN.md §8's table
+- [x] Integration tests covering each route's success and failure cases ([tests/test_api_routes.py](tests/test_api_routes.py), 16 cases, via `aiohttp.test_utils`/`pytest-aiohttp` against a bare `web.Application()` — no PromptServer needed)
+- [x] `register_routes` wired into [__init__.py](__init__.py) against the real `PromptServer.instance.routes`, gated on `"server" in sys.modules` so the package stays importable outside ComfyUI (needed because pytest's own package-collection semantics require importing `__init__.py` — see commit history)
+- [x] Verified live against the local ComfyUI instance: all four routes respond with the correct status/body for both success and error cases (traversal, missing query param, missing root handled as a 200 with an `errors` entry rather than a 500, per DESIGN.md's error taxonomy)
+
+Dev dependencies for the test suite are listed in [requirements-dev.txt](requirements-dev.txt) (`pip install -r requirements-dev.txt` into `.venv`).
 
 ## Milestone 4 — Frontend table shell
 
-- [ ] Register JS extension + mount DOM widget on the node (DESIGN.md §9)
-- [ ] Fetch and render file tree (sections + rows) on node creation
-- [ ] Collapsible section headers with expand/collapse state — satisfies AC3
-- [ ] Per-file enabled toggle, left-aligned per row — satisfies AC4, AC14
-- [ ] Drag handle + within-section drag-and-drop reordering (DESIGN.md §9) — satisfies AC19
-- [ ] Add File header control: inline input, client-side validation mirroring backend rules, calls create API, refreshes table, new row disabled by default — satisfies AC5, AC6, AC7, AC22
-- [ ] Random toggle control
-- [ ] Manual Refresh action that reconciles without discarding existing state
-- [ ] Loading state and inline error surface for file-list fetch failures
+Implemented in [web/smart_wildcards.js](web/smart_wildcards.js) (extension registration, header controls, fetch/load) and [web/table.js](web/table.js) (tree rendering). State lives **in-memory only** on the node instance for now (`node._smartWildcards.state`) — it is not yet written to a serialized widget, so it does not survive a workflow save/reload. That persistence wiring (the hidden state widget + Python-side parsing) is explicitly Milestone 6/7's job, not pulled forward here.
+
+- [x] Register JS extension + mount DOM widget on the node (DESIGN.md §9) — confirmed `addDOMWidget`, `beforeRegisterNodeDef`, `nodeCreated`/`onNodeCreated` all exist in the installed frontend bundle (`comfyui_frontend_package` 1.59.6)
+- [x] Fetch and render file tree (sections + rows) on node creation
+- [x] Collapsible section headers with expand/collapse state, arbitrary nesting depth (indented hierarchy per DESIGN.md §14's default) — satisfies AC3
+- [x] Per-file enabled toggle, left-aligned per row — satisfies AC4, AC14
+- [x] Drag handle + within-section drag-and-drop reordering (native HTML5 DnD, constrained to same `dirPath`, DESIGN.md §9) — satisfies AC19
+- [x] Add File header control: inline input, calls create API, refreshes table, new row disabled by default (relies on the backend's validation/error messages rather than duplicating the rules client-side) — satisfies AC5, AC6, AC7, AC22
+- [x] Random toggle control (UI state only — nothing consumes it server-side yet; that's Milestone 6)
+- [x] Manual Refresh action (calls `POST /refresh`, re-renders without resetting `state.order`/`state.collapsed`/`state.files`)
+- [x] Loading state and inline error surface (header status text) for file-list fetch failures
 
 ## Milestone 5 — Entry selection
 
-- [ ] Entry picker popover: fetch on open, client-side cache by `(relpath, mtime)`, search/scroll for large files (DESIGN.md §9)
-- [ ] Visual distinction of the first/default entry in the picker
-- [ ] "Automatic / Default" option that clears a manual override — satisfies AC10
-- [ ] Selected-entry display in the row, truncated with full value on hover
-- [ ] Reconciliation notice when a saved manual entry no longer exists in the file (reset to Automatic + non-blocking notice, DESIGN.md §10)
-- [ ] Satisfies AC8, AC9
+Implemented in [web/entry_picker.js](web/entry_picker.js).
+
+- [x] Entry picker popover: fetch on open via `GET /entries`, client-side cache by `(relpath, mtime)`, search box, scrollable list, viewport-aware positioning (DESIGN.md §9)
+- [x] Visual distinction of the first/default entry in the picker (bold)
+- [x] "Automatic / Default" option pinned at the top that clears a manual override — satisfies AC10
+- [x] Selected-entry display in the row, truncated via CSS ellipsis with full value in the `title` tooltip; an `auto` row additionally previews the resolved first entry once entries have been fetched at least once
+- [x] Reconciliation notice when a saved manual entry no longer exists in the freshly-fetched entries (reset to Automatic + a non-blocking banner) — exercised every time the picker opens, which is the same code path Milestone 7 will reuse at workflow-load time
+- [x] Satisfies AC8, AC9
+
+**Frontend verification performed:** all four JS files pass `node --check` (ES module syntax), and — against the real local ComfyUI instance — `GET /extensions` lists all three top-level modules under `/extensions/comfyui-smart-wildcards/...`, and fetching `smart_wildcards.js`/`style.css` returns 200 with byte-identical content to the source and correct content types. **Not verified:** actual in-browser rendering, click/drag interaction, and visual appearance — this session has no browser automation tool available, so the DOM/event-wiring logic was verified by careful code review and static checks only, not by driving a real browser. Worth an actual click-through in ComfyUI's UI before relying on this for real use.
 
 ## Milestone 6 — Prompt execution (Python)
 
