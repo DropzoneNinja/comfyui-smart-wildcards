@@ -340,55 +340,12 @@ function initSmartWildcardsNode(node) {
   };
   syncTableWidgetWidth();
 
-  const onResizeBeforeDebug = node.onResize;
+  const onResizeBeforeFix = node.onResize;
   node.onResize = function () {
-    const result = onResizeBeforeDebug ? onResizeBeforeDebug.apply(this, arguments) : undefined;
+    const result = onResizeBeforeFix ? onResizeBeforeFix.apply(this, arguments) : undefined;
     syncTableWidgetWidth();
     return result;
   };
-
-  // TEMPORARY DEBUG INSTRUMENTATION -- remove once the width-resize bug
-  // is diagnosed. Logs whenever our element, its parent (the host's
-  // DOM-widget wrapper), or the node's own size actually change, so we
-  // can see from the console which of those does/doesn't track a
-  // manual node resize -- without depending on devtools element-picking
-  // (which ComfyUI's canvas contextmenu handler appears to block).
-  (function installResizeDebug() {
-    const tag = "[SmartWildcards DEBUG]";
-    const describe = (label) => {
-      const rootRect = root.getBoundingClientRect();
-      const parent = root.parentElement;
-      const parentRect = parent ? parent.getBoundingClientRect() : null;
-      console.log(tag, label, {
-        nodeSize: node.size ? [node.size[0], node.size[1]] : null,
-        rootRect: [Math.round(rootRect.width), Math.round(rootRect.height)],
-        parentTag: parent ? `${parent.tagName}.${parent.className}` : null,
-        parentRect: parentRect ? [Math.round(parentRect.width), Math.round(parentRect.height)] : null,
-        parentInlineStyle: parent ? parent.getAttribute("style") : null,
-      });
-    };
-
-    describe("initial");
-
-    if (typeof ResizeObserver !== "undefined") {
-      const roRoot = new ResizeObserver(() => describe("ResizeObserver(root element)"));
-      roRoot.observe(root);
-      if (root.parentElement) {
-        const roParent = new ResizeObserver(() => describe("ResizeObserver(parent wrapper)"));
-        roParent.observe(root.parentElement);
-      }
-    } else {
-      console.log(tag, "ResizeObserver unavailable in this browser");
-    }
-
-    const origOnResize = node.onResize;
-    node.onResize = function (size) {
-      console.log(tag, "node.onResize fired", size ? [size[0], size[1]] : null);
-      const result = origOnResize ? origOnResize.apply(this, arguments) : undefined;
-      describe("after node.onResize (tableWidget.width=" + tableWidget.width + ")");
-      return result;
-    };
-  })();
 
   loadFiles();
 }
