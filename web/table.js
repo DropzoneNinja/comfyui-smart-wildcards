@@ -26,18 +26,106 @@ export function renderTable(container, treeResult, state, actions) {
   container.innerHTML = "";
 
   const errorsByPath = new Map((treeResult.errors || []).map((e) => [e.path, e.message]));
+  const hasMissing = Array.isArray(state.missing) && state.missing.length > 0;
 
   if (!treeResult.tree || treeResult.tree.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "sw-empty-state";
-    empty.textContent = (treeResult.errors && treeResult.errors.length)
-      ? `Wildcard root unavailable: ${treeResult.errors[0].message}`
-      : "No wildcard files found. Use “+ Add File” to create one.";
-    container.appendChild(empty);
-    return;
+    if (!hasMissing) {
+      const empty = document.createElement("div");
+      empty.className = "sw-empty-state";
+      empty.textContent = (treeResult.errors && treeResult.errors.length)
+        ? `Wildcard root unavailable: ${treeResult.errors[0].message}`
+        : "No wildcard files found. Use “+ Add File” to create one.";
+      container.appendChild(empty);
+      return;
+    }
+  } else {
+    renderDirContents(container, ".", 0, treeResult.tree, state, actions, errorsByPath);
   }
 
-  renderDirContents(container, ".", 0, treeResult.tree, state, actions, errorsByPath);
+  if (hasMissing) {
+    container.appendChild(renderMissingSection(state.missing, state, actions));
+  }
+}
+
+const MISSING_SECTION_KEY = "__missing__";
+
+function renderMissingSection(missingPaths, state, actions) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "sw-section";
+  wrapper.dataset.depth = "0";
+
+  const collapsed = !!state.collapsed[MISSING_SECTION_KEY];
+
+  const header = document.createElement("div");
+  header.className = "sw-section-header";
+
+  const caret = document.createElement("span");
+  caret.className = "sw-section-caret";
+  caret.textContent = collapsed ? "▶" : "▼";
+  header.appendChild(caret);
+
+  const label = document.createElement("span");
+  label.textContent = `Missing files (${missingPaths.length})`;
+  header.appendChild(label);
+
+  header.onclick = () => {
+    state.collapsed[MISSING_SECTION_KEY] = !collapsed;
+    actions.onStateChanged({ rerender: true });
+  };
+  wrapper.appendChild(header);
+
+  if (!collapsed) {
+    const body = document.createElement("div");
+    const sorted = [...missingPaths].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    for (const relpath of sorted) {
+      body.appendChild(renderMissingRow(relpath, state, actions));
+    }
+    wrapper.appendChild(body);
+  }
+
+  return wrapper;
+}
+
+function renderMissingRow(relpath, state, actions) {
+  const fstate = ensureFileState(state, relpath);
+
+  const row = document.createElement("div");
+  row.className = "sw-row sw-missing";
+  row.dataset.depth = "1";
+  row.dataset.relpath = relpath;
+
+  const handle = document.createElement("span");
+  handle.className = "sw-drag-handle";
+  row.appendChild(handle);
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = fstate.enabled;
+  checkbox.title = "Settings are preserved in case this file reappears";
+  checkbox.onchange = () => {
+    fstate.enabled = checkbox.checked;
+    actions.onStateChanged({ rerender: false });
+  };
+  row.appendChild(checkbox);
+
+  const name = document.createElement("span");
+  name.className = "sw-row-name";
+  name.textContent = relpath;
+  name.title = `${relpath} (no longer found under the wildcard root)`;
+  row.appendChild(name);
+
+  const entryBtn = document.createElement("button");
+  entryBtn.className = "sw-entry-btn sw-auto";
+  entryBtn.disabled = true;
+  entryBtn.textContent = fstate.mode === "entry" && fstate.entry !== null ? fstate.entry : "Automatic / Default";
+  row.appendChild(entryBtn);
+
+  const status = document.createElement("span");
+  status.className = "sw-row-status sw-error";
+  status.textContent = "missing";
+  row.appendChild(status);
+
+  return row;
 }
 
 function renderDirContents(container, dirPath, depth, children, state, actions, errorsByPath) {

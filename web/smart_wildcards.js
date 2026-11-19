@@ -1,7 +1,8 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { renderTable } from "./table.js";
-import { closeEntryPicker } from "./entry_picker.js";
+import { closeEntryPicker, getEntries } from "./entry_picker.js";
+import { flattenFileNodes, recomputeMissing, reconcileState } from "./state_sync.js";
 
 const NODE_CLASS = "SmartWildcards";
 
@@ -19,6 +20,7 @@ function createDefaultState() {
     files: {},
     order: {},
     collapsed: {},
+    missing: [],
   };
 }
 
@@ -29,6 +31,29 @@ function countFiles(nodes) {
     else total += countFiles(entry.children);
   }
   return total;
+}
+
+function findStateWidget(node) {
+  return (node.widgets || []).find((w) => w.name === "wildcards_state");
+}
+
+// Keeps the widget serialized (so its value round-trips with the workflow)
+// while hiding it from view -- our DOM widget is the real UI.
+function hideStateWidget(widget) {
+  widget.computeSize = () => [0, -4];
+  widget.type = "hidden";
+  if (widget.inputEl) widget.inputEl.style.display = "none";
+  if (widget.element) widget.element.style.display = "none";
+}
+
+function loadStateFromWidgetValue(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 app.registerExtension({
@@ -44,6 +69,25 @@ app.registerExtension({
       return result;
     };
 
+    // configure() is how litegraph restores a saved workflow's widget
+    // values onto an already-constructed node -- it runs AFTER
+    // onNodeCreated, so this is the first point where the hidden state
+    // widget's value actually reflects what was saved (not the INPUT_TYPES
+    // default). The tree hasn't loaded yet at this point (loadFiles() is
+    // async), so we just capture the raw blob here; the first successful
+    // tree load in loadFiles() does the actual reconciliation against it.
+    const onConfigure = nodeType.prototype.configure;
+    nodeType.prototype.configure = function () {
+      const result = onConfigure ? onConfigure.apply(this, arguments) : undefined;
+      const ctx = this._smartWildcards;
+      if (ctx) {
+        const widget = findStateWidget(this);
+        ctx.pendingRestoreRaw = widget ? loadStateFromWidgetValue(widget.value) : null;
+        ctx.tryReconcile();
+      }
+      return result;
+    };
+
     const onRemoved = nodeType.prototype.onRemoved;
     nodeType.prototype.onRemoved = function () {
       if (this._smartWildcards) closeEntryPicker();
@@ -54,8 +98,23 @@ app.registerExtension({
 
 function initSmartWildcardsNode(node) {
   const state = createDefaultState();
-  const ctx = { node, state, tree: null };
+  const ctx = { node, state, tree: null, reconciled: false, pendingRestoreRaw: null };
   node._smartWildcards = ctx;
+
+  const stateWidget = findStateWidget(node);
+  if (stateWidget) hideStateWidget(stateWidget);
+
+  function persist() {
+    if (!stateWidget) return;
+    stateWidget.value = JSON.stringify({
+      version: 1,
+      randomEnabled: state.randomEnabled,
+      files: state.files,
+      order: state.order,
+      collapsed: Object.keys(state.collapsed).filter((k) => state.collapsed[k]),
+      missing: state.missing || [],
+    });
+  }
 
   const root = document.createElement("div");
   root.className = "sw-root";
@@ -79,6 +138,7 @@ function initSmartWildcardsNode(node) {
   randomBtn.className = "sw-btn";
   randomBtn.textContent = "Random";
   randomBtn.title = "When on, Automatic files are randomly selected at execution time";
+  randomBtn.classList.toggle("sw-active", state.randomEnabled);
   header.appendChild(randomBtn);
 
   const refreshBtn = document.createElement("button");
@@ -121,14 +181,68 @@ function initSmartWildcardsNode(node) {
     status.classList.toggle("sw-error", !!isError);
   }
 
+  // One-time merge of a saved workflow's state against the tree, once both
+  // are available (see the configure() override above and DESIGN.md 10).
+  // Safe to call multiple times/orders -- only acts once.
+  ctx.tryReconcile = function () {
+    if (ctx.reconciled || !ctx.tree) return;
+    ctx.reconciled = true;
+    if (ctx.pendingRestoreRaw) {
+      const merged = reconcileState(ctx.pendingRestoreRaw, ctx.tree.tree);
+      state.randomEnabled = merged.randomEnabled;
+      state.files = merged.files;
+      state.order = merged.order;
+      state.collapsed = merged.collapsed;
+      randomBtn.classList.toggle("sw-active", state.randomEnabled);
+    }
+  };
+
   function renderBody() {
     if (!ctx.tree) return;
     renderTable(body, ctx.tree, state, {
       onStateChanged: ({ rerender }) => {
+        persist();
         if (rerender) renderBody();
       },
       onNotice: showNotice,
     });
+    persist();
+  }
+
+  // Re-checks every manually-selected file's entry against a fresh read,
+  // on every load/refresh (not just workflow load) -- PROJECT.md section 7
+  // ("refresh its entries if the file contents have changed"). Runs after
+  // the table's first paint so it never blocks showing the file list.
+  async function checkStaleManualEntries() {
+    if (!ctx.tree) return;
+    const fileNodes = flattenFileNodes(ctx.tree.tree);
+    const candidates = Object.entries(state.files).filter(([relpath, fstate]) => {
+      if (fstate.mode !== "entry" || fstate.entry === null) return false;
+      const info = fileNodes.get(relpath);
+      return info && (info.status === "ok" || info.status === "empty");
+    });
+
+    let changed = false;
+    for (const [relpath, fstate] of candidates) {
+      const info = fileNodes.get(relpath);
+      try {
+        const freshEntries = await getEntries(relpath, info.mtime);
+        if (!freshEntries.includes(fstate.entry)) {
+          fstate.mode = "auto";
+          fstate.entry = null;
+          changed = true;
+          showNotice(`${relpath}: selected entry no longer found, reset to Automatic`);
+        }
+      } catch {
+        // A hiccup fetching entries during this background check is not
+        // fatal -- the entry picker will surface it next time it's opened.
+      }
+    }
+
+    if (changed) {
+      persist();
+      renderBody();
+    }
   }
 
   async function loadFiles({ refresh = false } = {}) {
@@ -143,9 +257,13 @@ function initSmartWildcardsNode(node) {
         throw new Error(data?.error?.message || `request failed (${resp.status})`);
       }
       ctx.tree = data;
+      ctx.tryReconcile();
+      state.missing = recomputeMissing(state.files, ctx.tree.tree);
+
       const count = countFiles(ctx.tree.tree);
       setStatus(`${count} file${count === 1 ? "" : "s"}`, false);
       renderBody();
+      checkStaleManualEntries();
     } catch (err) {
       setStatus(String(err.message || err), true);
     }
@@ -190,6 +308,7 @@ function initSmartWildcardsNode(node) {
   randomBtn.onclick = () => {
     state.randomEnabled = !state.randomEnabled;
     randomBtn.classList.toggle("sw-active", state.randomEnabled);
+    persist();
   };
 
   refreshBtn.onclick = () => loadFiles({ refresh: true });

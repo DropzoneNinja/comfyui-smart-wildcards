@@ -30,6 +30,17 @@ def scan_wildcards(root: Path) -> dict:
     return {"root": str(root), "tree": tree, "errors": errors}
 
 
+def flatten_files(tree: list[dict]) -> dict[str, dict]:
+    """Flatten a scan_wildcards() "tree" value into {relpath: file_node}."""
+    result: dict[str, dict] = {}
+    for node in tree:
+        if node["type"] == "file":
+            result[node["path"]] = node
+        else:
+            result.update(flatten_files(node["children"]))
+    return result
+
+
 def _relpath(path: Path, root: Path) -> str:
     return path.relative_to(root).as_posix()
 

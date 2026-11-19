@@ -5,6 +5,26 @@ description = "ComfyUI custom node providing a table-based UI for combining wild
 requires-python = ">=3.9"
 dependencies = []
 
+[project.urls]
+Repository = "https://github.com/DropzoneNinja/comfyui-smart-wildcards"
+
+# PublisherId is intentionally left blank -- it must be your own comfy-cli
+# publisher ID (see https://docs.comfy.org/registry/overview) if you later
+# publish this node to the ComfyUI Registry. It is not required for a
+# manual git-clone install (see README.md).
+#
+# `web` is deliberately NOT set here even though it mirrors WEB_DIRECTORY
+# below: nodes.py's loader registers a node's web directory twice -- once
+# from this [tool.comfy] block (keyed by [project].name) and, unconditionally,
+# again from the plain WEB_DIRECTORY module attribute (keyed by the
+# custom-node folder's name) -- and ComfyUI has no de-duplication between
+# the two. Setting both means the frontend JS gets served under two
+# different /extensions/... URLs and loaded as two separate ES module
+# instances, double-registering the extension and double-initializing
+# every node. Verified live against ComfyUI v0.46.0 while writing this.
+[tool.comfy]
+DisplayName = "Smart Wildcards"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

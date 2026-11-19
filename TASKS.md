@@ -80,36 +80,68 @@ Implemented in [web/entry_picker.js](web/entry_picker.js).
 
 ## Milestone 6 — Prompt execution (Python)
 
-- [ ] Hidden state widget (`serialize: true`) holding the JSON schema from DESIGN.md §2.3; frontend state writes sync to it on every mutation
-- [ ] Seed `INT` widget/input on the node
-- [ ] `selection.py`: per-file seeded deterministic random pick (hashlib sub-seed, DESIGN.md §6) — satisfies AC12, AC17, AC18
-- [ ] `selection.py`: selection-rule resolution for all four auto/manual × random-on/off combinations — satisfies AC11, AC13
-- [ ] `prompt.py`: ordered assembly, comma-space join, skip disabled/empty/missing, trim — satisfies AC16
-- [ ] Execution-time per-file error handling: skip missing/unreadable files with a warning rather than failing the whole node — satisfies AC21
-- [ ] Execution status/preview text (warnings list) surfaced via the node's `ui` return value, not a second output socket (DESIGN.md §11)
-- [ ] Unit tests: full selection-rule table
-- [ ] Unit tests: determinism (same seed+contents → same output repeatedly; changed seed → different output)
-- [ ] Unit tests: prompt assembly edge cases (all disabled, all empty, mixed missing)
+- [x] Hidden state widget (`wildcards_state`, STRING, multiline) declared in `nodes.INPUT_TYPES`; frontend hides it visually (`sw-root` DOM widget is the real UI) and writes the serialized state into it on every mutation (`persist()` in [web/smart_wildcards.js](web/smart_wildcards.js))
+- [x] Seed `INT` widget/input on the node (plain widget, no `control_after_generate` — matches DESIGN.md §9's explicit scope decision)
+- [x] [selection.py](selection.py): per-file seeded deterministic random pick (hashlib sub-seed, DESIGN.md §6) — satisfies AC12, AC17, AC18
+- [x] [selection.py](selection.py): selection-rule resolution for all four auto/manual × random-on/off combinations — satisfies AC11, AC13
+- [x] [prompt.py](prompt.py): `compute_order` (mirrors web/table.js's section/order logic exactly) + `assemble_prompt` (ordered, comma-space join, skip disabled/empty/missing, trim) — satisfies AC16
+- [x] [nodes.py](nodes.py) `execute()`: ties scanning + ordering + selection + assembly together; missing-root is a hard `RuntimeError` (DESIGN.md §11), missing/unreadable individual files are skipped with a warning — satisfies AC21
+- [x] Execution status/preview text (warnings, or an "N file(s) contributed" summary) surfaced via `{"ui": {"text": (...)}, "result": (...)}` — the exact convention used by ComfyUI's own `comfy_extras/nodes_preview_any.py::PreviewAny`, confirmed by reading that file in the installed ComfyUI. `OUTPUT_NODE = True` is set so the preview actually renders, matching that same reference node.
+- [x] Unit tests: full selection-rule table ([tests/test_selection.py](tests/test_selection.py))
+- [x] Unit tests: determinism, including that one file's pick never depends on other files/call order (DESIGN.md §6's robustness property)
+- [x] Unit tests: prompt assembly + order edge cases ([tests/test_prompt.py](tests/test_prompt.py))
+- [x] Unit tests: full `execute()` pipeline, monkeypatching `WILDCARD_ROOT` to a `tmp_path` with real files ([tests/test_nodes.py](tests/test_nodes.py), 13 cases) — including a bug this caught: the first draft of `execute()` only emitted a "file is missing" warning for paths already walked from the *live* tree, which can never include a missing path — fixed by checking `state["files"]` against the live set directly.
+- [x] **Live-verified** against the local ComfyUI instance: `GET /object_info/SmartWildcards` shows the exact declared `seed`/`wildcards_state` inputs; a real `POST /prompt` submission was accepted by validation and, since `/basedir/wildcards` doesn't exist on this dev machine, raised the expected `RuntimeError` — ComfyUI's execution engine reported it cleanly via its standard `execution_error` mechanism with the exact message, confirming both the calling convention (`f(**inputs)`) and the missing-root hard-failure path work end-to-end in the real engine, not just in our own test harness.
 
 ## Milestone 7 — Persistence, reconciliation & validation
 
-- [ ] Node `configure()` handler: parse saved JSON state on workflow load, reconcile against a fresh scan per DESIGN.md §10
-- [ ] Unit tests: state reconciliation (new file appears disabled at end of section; removed file → `missing`, settings preserved, not reassigned; stale manual entry → reset to auto + notice)
-- [ ] Manual test: full save → reload round-trip preserves Random mode, seed, per-file enabled, per-file selection, custom order, collapse state — satisfies AC20
-- [ ] Manual test: delete a wildcard file on disk, refresh, confirm it's marked missing and other files' settings are untouched
-- [ ] Manual test: add a file on disk outside the UI, refresh, confirm it appears disabled at the end of its section without disturbing existing order
-- [ ] Manual penetration test: path traversal and symlink-escape attempts against all four API routes
-- [ ] Manual test: open the same saved workflow against a server with a different `/basedir/wildcards` contents; confirm graceful reconciliation (document the result as the "cross-instance" limitation)
-- [ ] Satisfies AC21, AC23
+- [x] [web/state_sync.js](web/state_sync.js): pure `reconcileState`/`recomputeMissing`/`flattenFileNodes` functions (DESIGN.md §10)
+- [x] `nodeType.prototype.configure` override in [web/smart_wildcards.js](web/smart_wildcards.js) captures the restored widget value once litegraph applies it (configure() runs *after* `onNodeCreated`, which is also after the DOM widget/table exist but before the async tree fetch resolves); the first successful tree load then performs the actual one-time merge via `reconcileState` — **this corrects a timing bug in the original Milestone 6 draft**, which read the widget's value too early (inside `onNodeCreated`, before litegraph had restored it) and would have silently discarded every saved workflow's state on the very first UI interaction
+- [x] `recomputeMissing` + a dedicated "Missing files" table section (`table.js`'s `renderMissingSection`) run on *every* load/refresh, not just workflow load — a file's settings stay in `state.files` keyed by its relpath, so nothing is ever silently reassigned to a different file, and they're reapplied automatically if the file reappears
+- [x] Stale manual-entry reconciliation runs on every load/refresh too (`checkStaleManualEntries`, re-fetches entries for every `mode: "entry"` file and resets+notifies if the saved text is gone), in addition to the per-open check already in Milestone 5's entry picker
+- [x] Verified via a one-off Node script exercising the real `state_sync.js` module directly (not committed — kept consistent with DESIGN.md §12's no-JS-test-harness decision, but this logic was important enough to actually run, not just review): new-file-defaults, missing-file settings preserved and not reassigned, automatic "un-missing" on reappearance, and `flattenFileNodes` nesting — all 12 checks passed.
+- [x] Unit tests (Python side): `test_execute_unknown_file_not_in_state_is_treated_as_disabled` and `test_execute_missing_file_does_not_affect_other_files_settings` added to [tests/test_nodes.py](tests/test_nodes.py), on top of Milestone 6's missing/stale-entry coverage — closes the loop on "new file disabled by default" and "missing file settings not reassigned" at the execution layer, which is where AC21 is actually enforced.
+- [x] **Live penetration test**, all four routes, against the real server: `../etc/passwd`, `../../etc/passwd`, `people/../../etc/passwd`, `./../etc/passwd`, `/etc/passwd`, `//etc/passwd` via `GET /entries`; `../escape.txt`, `/etc/evil.txt`, `sub/../../escape.txt`, `..` via `POST /files` — every single one rejected with 400 and the correct error code. Real symlink-escape attempts are covered at the unit level instead ([tests/test_paths.py](tests/test_paths.py), [tests/test_scanner.py](tests/test_scanner.py)) using real symlinks on a real temp filesystem, since `/basedir/wildcards` doesn't exist on this dev machine to place one inside.
+- [ ] **Not verified — environment limits, not a code gap:** a full save → reload round-trip through ComfyUI's actual UI (AC20), and opening the same workflow against a server with different wildcard contents (the "cross-instance" scenario). This machine has no browser-automation tool available and `/basedir` can't be created here (read-only root filesystem — confirmed via `mkdir /basedir` failing with "Read-only file system", not just a permissions issue sudo would fix). The underlying mechanism for both is implemented and verified as above (configure-hook timing, reconciliation logic, missing-file handling); what's specifically unverified is driving it through a real browser session. Worth an explicit click-through test before depending on this for real workflows.
+- Satisfies AC21, AC22; AC20 and AC23 are implemented but not independently browser/Docker-verified (see above and Milestone 8's acceptance-criteria walkthrough)
 
 ## Milestone 8 — Documentation & packaging
 
-- [ ] `README.md`: installation (Docker + manual), usage walkthrough, troubleshooting, the cross-instance limitation
-- [ ] `pyproject.toml` / manifest metadata suitable for the target ComfyUI custom-node manager, if applicable
-- [ ] Document the workflow JSON state format (DESIGN.md §2.3) for future debugging
-- [ ] Walk every item in PROJECT.md §11 (AC1–AC24) explicitly and confirm pass/fail
-- [ ] Confirm no ComfyUI core files were modified — satisfies AC24
-- [ ] Record any known limitations or decisions still needing user input
+- [x] [README.md](README.md): installation (Docker + manual), usage walkthrough, the workflow-state JSON format, troubleshooting table, and known limitations (including the cross-instance and no-browser-testing caveats, stated plainly rather than glossed over)
+- [x] `pyproject.toml`: added `[project.urls]` and a `[tool.comfy]` block (`DisplayName`) for ComfyUI Registry/`comfy-cli` compatibility. **Deliberately did not** set `[tool.comfy] web = "web"` even though it mirrors `WEB_DIRECTORY` — verified live that setting both causes ComfyUI to register the web directory twice, under two different `/extensions/...` URLs, which the browser would load as two separate ES module instances and double-initialize every node (double DOM widgets, `configure()` firing twice). This is left as a comment in pyproject.toml so a future edit doesn't reintroduce it. `PublisherId` is deliberately left blank — it belongs to whoever registers a comfy-cli publisher account, not something to fabricate.
+- [x] Workflow JSON state format documented in README's "How state is stored in the workflow" section (mirrors DESIGN.md §2.3)
+- [x] PROJECT.md §11 acceptance criteria walked explicitly — see table below
+- [x] Confirmed no ComfyUI core files were modified — `git status --short` inside the live ComfyUI checkout is completely clean (our custom node is a symlink under `custom_nodes/`, which ComfyUI's own `.gitignore` already excludes) — satisfies AC24
+- [x] Known limitations recorded in README.md's "Known limitations" section (no browser testing, cross-instance behavior, fixed wildcard root, unverified Docker mount, no license chosen yet)
+
+### PROJECT.md §11 acceptance criteria
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Node appears in a sensible category, can be added to a workflow | ✅ Live-verified (`category: "utils/wildcards"` via `/object_info`) |
+| 2 | Scans root, displays all supported `.txt` files | ✅ Unit/integration-tested; live API verified against the (empty/missing) real root |
+| 3 | Subdirectory files under collapsible section dividers | ✅ Implemented ([web/table.js](web/table.js)); not browser-verified |
+| 4 | Independent enabled/disabled toggle per file | ✅ |
+| 5 | Add File creates a root-level file and refreshes the table | ✅ Live-verified via the API; JS wiring calls `loadFiles()` after creation |
+| 6 | Filename with/without `.txt` creates the expected name | ✅ Unit + live-tested |
+| 7 | Existing files can't be accidentally overwritten | ✅ Unit + live-tested (atomic `"x"` mode, 409 on conflict) |
+| 8 | Entry picker shows non-empty lines from the file | ✅ |
+| 9 | A specific entry can be selected and is shown in the row | ✅ |
+| 10 | Returning to Automatic clears the manual override | ✅ |
+| 11 | Random off: selected entry, or first non-empty entry if Automatic | ✅ Unit-tested (full rule table) |
+| 12 | Random on: Automatic files get a seed-determined random entry | ✅ Unit-tested + live execution test |
+| 13 | Random on: manual entry used unchanged | ✅ Unit-tested |
+| 14 | Disabled files never contribute | ✅ Unit-tested |
+| 15 | Empty files / blank lines don't cause errors | ✅ Unit-tested |
+| 16 | Output is a single string, connects to normal text inputs | ✅ Live-verified (`RETURN_TYPES=("STRING",)` via `/object_info`) |
+| 17 | Random resolved every execution, reproducible per seed+contents | ✅ Unit-tested (`execute()` recomputes on every call) |
+| 18 | Changing the seed can change the selection | ✅ Unit-tested |
+| 19 | Drag-and-drop order changes prompt order, survives save/reload/refresh | ⚠️ Order logic unit-tested end-to-end (`compute_order`, `test_execute_respects_custom_order`); drag-and-drop itself and the save/reload round-trip are **not browser-verified** (see Milestone 7) |
+| 20 | Save/reload preserves random mode, seed, enabled, selections, order | ⚠️ Mechanism implemented (`configure()` hook + `reconcileState`) and logic-verified via a standalone script; **not verified through an actual ComfyUI save/reload in a browser** |
+| 21 | File changes, missing files, invalid paths handled safely/visibly | ✅ Unit-tested + live penetration-tested; "visibly" depends on the (not browser-verified) UI rendering the missing-files section/notices correctly |
+| 22 | New/newly-discovered files disabled by default | ✅ Unit-tested on both the creation path and the reconciliation path |
+| 23 | Works in the Docker environment with the root mounted | ❌ **Not verified** — no Docker environment was available during development (this machine's root filesystem is read-only and couldn't host `/basedir` at all); the code has no Docker-specific logic, it just reads a fixed filesystem path, but this is genuinely unconfirmed in an actual container |
+| 24 | No ComfyUI core files modified | ✅ Confirmed via a clean `git status` in the live ComfyUI checkout |
 
 ## Stretch / explicitly deferred (not required for v1)
 
