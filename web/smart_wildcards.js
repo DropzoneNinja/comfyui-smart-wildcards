@@ -316,8 +316,17 @@ function initSmartWildcardsNode(node) {
   node.addDOMWidget("smart_wildcards_table", "SmartWildcardsTable", root, {
     serialize: false,
     getMinHeight: () => 220,
-    getMaxHeight: () => 600,
   });
+
+  // The DOM-widget layout system only honors height bounds (above), not
+  // width -- a freshly created node is only as wide as its narrowest
+  // widget (e.g. "control_after_generate"), which leaves the table cramped
+  // until the user manually drags the node wider. Give it a sane default
+  // size; the table's CSS (width/height: 100%) already fills whatever size
+  // the node ends up at, including on later manual resizes.
+  const MIN_NODE_WIDTH = 420;
+  const MIN_NODE_HEIGHT = 320;
+  node.setSize([Math.max(node.size[0], MIN_NODE_WIDTH), Math.max(node.size[1], MIN_NODE_HEIGHT)]);
 
   loadFiles();
 }
