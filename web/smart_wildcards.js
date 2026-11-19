@@ -313,7 +313,7 @@ function initSmartWildcardsNode(node) {
 
   refreshBtn.onclick = () => loadFiles({ refresh: true });
 
-  node.addDOMWidget("smart_wildcards_table", "SmartWildcardsTable", root, {
+  const tableWidget = node.addDOMWidget("smart_wildcards_table", "SmartWildcardsTable", root, {
     serialize: false,
     getMinHeight: () => 220,
   });
@@ -327,6 +327,25 @@ function initSmartWildcardsNode(node) {
   const MIN_NODE_WIDTH = 420;
   const MIN_NODE_HEIGHT = 320;
   node.setSize([Math.max(node.size[0], MIN_NODE_WIDTH), Math.max(node.size[1], MIN_NODE_HEIGHT)]);
+
+  // The host positions this widget's DOM wrapper using
+  // `(tableWidget.width ?? node.width) - margin*2` every frame. Once
+  // something assigns tableWidget.width a concrete number, the node's
+  // *live* width is never consulted again, even while manually dragging
+  // the node's resize handle -- which is exactly the frozen-width bug
+  // observed in production. Forcing it to the node's real width on every
+  // resize keeps it from ever going stale, regardless of what pinned it.
+  const syncTableWidgetWidth = () => {
+    tableWidget.width = node.size[0];
+  };
+  syncTableWidgetWidth();
+
+  const onResizeBeforeDebug = node.onResize;
+  node.onResize = function () {
+    const result = onResizeBeforeDebug ? onResizeBeforeDebug.apply(this, arguments) : undefined;
+    syncTableWidgetWidth();
+    return result;
+  };
 
   // TEMPORARY DEBUG INSTRUMENTATION -- remove once the width-resize bug
   // is diagnosed. Logs whenever our element, its parent (the host's
@@ -366,7 +385,7 @@ function initSmartWildcardsNode(node) {
     node.onResize = function (size) {
       console.log(tag, "node.onResize fired", size ? [size[0], size[1]] : null);
       const result = origOnResize ? origOnResize.apply(this, arguments) : undefined;
-      describe("after node.onResize");
+      describe("after node.onResize (tableWidget.width=" + tableWidget.width + ")");
       return result;
     };
   })();
